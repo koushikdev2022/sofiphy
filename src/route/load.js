@@ -9,6 +9,7 @@ const planLoad = require("../route/plan/planLoad");
 const adminLoad = require("./admin/adminLoad")
 const slotLoad = require("./slot/slotLoad")
 const printifyLoad = require("./printify/printifyLoad")
+const shopifyLoad = require("./shopify/shopifyLoad");
 
 const defaultRoutes = [
     {
@@ -39,6 +40,10 @@ const defaultRoutes = [
         prefix: "/admin",
         route: adminLoad,
     },
+    {
+        prefix:"/",
+        route:shopifyLoad,
+    }
    
 ]
 defaultRoutes.forEach((route) => {
