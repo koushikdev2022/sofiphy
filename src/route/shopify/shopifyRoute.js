@@ -3,8 +3,11 @@ const shopifyRoute = express.Router();
 
 const shopifyController = require("../../controller/api/shopify/shopify.controller");
 
-shopifyRoute.get('/order',shopifyController.order);
-shopifyRoute.get('/order-vendor',shopifyController.getVendorOrders);
+shopifyRoute.get('/order/:id',shopifyController.order);
+shopifyRoute.get('/order-vendor/:id',shopifyController.getVendorOrders);
+shopifyRoute.get('/product/:id',shopifyController.products);
+shopifyRoute.get('/product-vendor/:id',shopifyController.getVendorProducts);
+
 
 
 module.exports = shopifyRoute;

@@ -117,10 +117,12 @@ exports.register = async (req, res) => {
     try {
         const payload = req?.body;
         const pwd = await bcrypt.hashSync(payload?.password, 10);
+        const full_name = payload?.first_name+' '+payload?.last_name
         const reg = await User.create({
             first_name: payload?.first_name,
             last_name: payload?.last_name,
             username: payload?.username,
+            full_name:full_name,
             email: payload?.email,
             password: pwd,
         });
