@@ -21,6 +21,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+      name:{
+           type: DataTypes.STRING,
+        allowNull: false,
+      },
       shop1_api_secret: {
         type: DataTypes.STRING,
         allowNull: false,

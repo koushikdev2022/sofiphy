@@ -285,3 +285,26 @@ exports.getVendorProducts = async (req, res) => {
     });
   }
 };
+
+
+
+
+exports.creds = async(req,res)=>{
+  try{
+      const cred = await CresModel.findAll()
+      return res.status(200).json({
+        "message":"data found",
+        "status":true,
+        "status_code":200,
+        "data":cred
+      })
+  }catch (error) {
+    console.error('Error fetching vendor products:', error?.response?.data || error.message);
+    const status = error?.response?.status || 500;
+    return res.status(status).json({
+      msg: error?.response?.data?.message || "Internal Server Error",
+      status: false,
+      status_code: status
+    });
+  }
+}
