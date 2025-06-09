@@ -10,7 +10,7 @@ module.exports = {
         allowNull: false,
         primaryKey: true,
       },
-   shop1_api_key: {
+      shop1_api_key: {
         type: Sequelize.STRING,
         allowNull: false,
       },
