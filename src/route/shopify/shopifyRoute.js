@@ -17,6 +17,9 @@ shopifyRoute.get('/total-paid-order/:id',shopifyController.getTotalPaidPendingOr
 
 
 shopifyRoute.get('/top-sell-product/:id',shopifyController.topSellingProductsPieChart);
+shopifyRoute.post('/product-sell-per-day',shopifyController.getProductSalesByDate);
+
+
 
 
 

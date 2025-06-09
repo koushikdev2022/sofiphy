@@ -551,13 +551,16 @@ exports.cancelOrder = async (req, res) => {
 exports.cancelOrderSimple = async (req, res) => {
   try {
     const userData = req?.params?.id;
+    const requestedVendor = req.user.full_name;
+
     const creds = await CresModel.findByPk(userData);
-    
+    const normalizedRequestedVendor = normalizeVendor(requestedVendor);
+
     const shopDomain = creds?.shop1_domain;
     const token = creds?.shop1_access_token;
 
-    // Fetch orders with optimized query - only get open/unfulfilled orders
-    const url = `https://${shopDomain}/admin/api/2024-01/orders.json?status=open&fulfillment_status=unfulfilled&limit=250`;
+    const url = `https://${shopDomain}/admin/api/2024-01/orders.json?status=any&limit=250`;
+
     const response = await axios.get(url, {
       headers: {
         'X-Shopify-Access-Token': token,
@@ -565,178 +568,92 @@ exports.cancelOrderSimple = async (req, res) => {
       }
     });
 
-    // Filter cancellable orders (already optimized by the query above)
-    const ordersToCancel = response.data.orders.filter(order => 
-      order.cancelled_at === null &&
-      ['paid', 'pending', 'authorized', 'partially_paid'].includes(order.financial_status)
+    // Filter orders for this vendor
+    const filteredOrders = response.data.orders.filter(order =>
+      order.line_items?.some(item =>
+        normalizeVendor(item.vendor) === normalizedRequestedVendor
+      )
     );
 
-    // Process cancellations in parallel batches to speed up
-    const BATCH_SIZE = 10; // Process 10 orders at once
-    let cancelledCount = 0;
-
-    // Split orders into batches
-    const batches = [];
-    for (let i = 0; i < ordersToCancel.length; i += BATCH_SIZE) {
-      batches.push(ordersToCancel.slice(i, i + BATCH_SIZE));
-    }
-
-    // Process each batch in parallel
-    for (const batch of batches) {
-      const cancelPromises = batch.map(async (order) => {
-        try {
-          const cancelUrl = `https://${shopDomain}/admin/api/2024-01/orders/${order.id}/cancel.json`;
-          
-          await axios.post(cancelUrl, {
-            reason: 'other',
-            email: false, // Disable email to speed up (set to true if you need emails)
-            refund: order.financial_status === 'paid'
-          }, {
-            headers: {
-              'X-Shopify-Access-Token': token,
-              'Content-Type': 'application/json'
-            },
-            timeout: 5000 // 5 second timeout per request
-          });
-
-          return { success: true, orderId: order.id };
-        } catch (cancelError) {
-          console.error(`Failed to cancel order ${order.id}:`, cancelError.message);
-          return { success: false, orderId: order.id };
-        }
-      });
-
-      // Wait for the current batch to complete
-      const results = await Promise.allSettled(cancelPromises);
-      
-      // Count successful cancellations
-      results.forEach(result => {
-        if (result.status === 'fulfilled' && result.value.success) {
-          cancelledCount++;
-        }
-      });
-
-      // Small delay between batches to respect rate limits
-      if (batches.indexOf(batch) < batches.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-    }
+    // Calculate cancelled orders
+    const cancelledOrders = filteredOrders.filter(order => order.cancelled_at !== null);
+    const cancelledCount = cancelledOrders.length;
 
     return res.status(200).json({
       status: true,
       status_code: 200,
-      cancelOrder: cancelledCount,
-      totalFound: ordersToCancel.length
+      vendor: requestedVendor,
+      totalOrders: filteredOrders.length,
+      cancelledOrdersCount: cancelledCount,
+      orders: filteredOrders
     });
 
   } catch (error) {
-    console.error('Error:', error?.response?.data || error.message);
-    return res.status(500).json({
+    console.error('Error fetching vendor orders:', error?.response?.data || error.message);
+    const status = error?.response?.status || 500;
+    return res.status(status).json({
+      msg: error?.response?.data?.message || "Internal Server Error",
       status: false,
-      status_code: 500,
-      cancelOrder: 0,
-      error: error.message
+      status_code: status
     });
   }
-}
+};
 
 
 
 
 exports.getTotalPaidPendingOrders = async (req, res) => {
-  try {
+ try {
     const userData = req?.params?.id;
+    const requestedVendor = req.user.full_name;
+
     const creds = await CresModel.findByPk(userData);
-    
-    if (!creds) {
-      return res.status(404).json({
-        status: false,
-        status_code: 404,
-        msg: "User credentials not found"
-      });
-    }
+    const normalizedRequestedVendor = normalizeVendor(requestedVendor);
 
     const shopDomain = creds?.shop1_domain;
     const token = creds?.shop1_access_token;
 
-    if (!shopDomain || !token) {
-      return res.status(400).json({
-        status: false,
-        status_code: 400,
-        msg: "Shop domain or access token missing"
-      });
-    }
+    const url = `https://${shopDomain}/admin/api/2024-01/orders.json?status=any&limit=250`;
 
-    // Fetch all orders with pagination
-    let allOrders = [];
-    let hasNextPage = true;
-    let pageInfo = '';
-
-    while (hasNextPage && allOrders.length < 5000) { // Safety limit
-      const url = `https://${shopDomain}/admin/api/2024-01/orders.json?status=any&limit=250&fields=id,financial_status,cancelled_at,total_price${pageInfo}`;
-      
-      const response = await axios.get(url, {
-        headers: {
-          'X-Shopify-Access-Token': token,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      allOrders = [...allOrders, ...response.data.orders];
-      
-      hasNextPage = response.data.orders.length === 250;
-      if (hasNextPage) {
-        const lastOrderId = response.data.orders[response.data.orders.length - 1].id;
-        pageInfo = `&since_id=${lastOrderId}`;
+    const response = await axios.get(url, {
+      headers: {
+        'X-Shopify-Access-Token': token,
+        'Content-Type': 'application/json'
       }
-    }
+    });
 
-    // Filter and count orders
-    const paidOrders = allOrders.filter(order => 
-      order.financial_status === 'paid' && 
-      order.cancelled_at === null
+    // Filter orders for this vendor
+    const filteredOrders = response.data.orders.filter(order =>
+      order.line_items?.some(item =>
+        normalizeVendor(item.vendor) === normalizedRequestedVendor
+      )
     );
 
-    const pendingOrders = allOrders.filter(order => 
-      order.financial_status === 'pending' && 
-      order.cancelled_at === null
-    );
+    // Calculate cancelled orders
+    const cancelledOrders = filteredOrders.filter(order => order.cancelled_at !== null);
+    const cancelledCount = cancelledOrders.length;
 
-    // Calculate totals
-    const totalPaidAmount = paidOrders.reduce((sum, order) => 
-      sum + parseFloat(order.total_price || 0), 0
-    );
-
-    const totalPendingAmount = pendingOrders.reduce((sum, order) => 
-      sum + parseFloat(order.total_price || 0), 0
-    );
+    // Calculate paid orders
+    const paidOrders = filteredOrders.filter(order => order.financial_status === 'paid');
+    const paidCount = paidOrders.length;
 
     return res.status(200).json({
       status: true,
       status_code: 200,
-      data: {
-        paid_orders: {
-          count: paidOrders.length,
-          total_amount: totalPaidAmount.toFixed(2)
-        },
-        pending_orders: {
-          count: pendingOrders.length,
-          total_amount: totalPendingAmount.toFixed(2)
-        },
-        combined: {
-          total_count: paidOrders.length + pendingOrders.length,
-          total_amount: (totalPaidAmount + totalPendingAmount).toFixed(2)
-        }
-      }
+      vendor: requestedVendor,
+      totalOrders: filteredOrders.length,
+      cancelledOrdersCount: cancelledCount,
+      paidOrdersCount: paidCount,
+      orders: filteredOrders
     });
 
   } catch (error) {
-    console.error('Error fetching orders:', error?.response?.data || error.message);
+    console.error('Error fetching vendor orders:', error?.response?.data || error.message);
     const status = error?.response?.status || 500;
     return res.status(status).json({
+      msg: error?.response?.data?.message || "Internal Server Error",
       status: false,
-      status_code: status,
-      msg: error?.response?.data?.message || "Internal Server Error"
+      status_code: status
     });
   }
 }
@@ -884,5 +801,84 @@ exports.topSellingProductsPieChart = async (req, res) => {
       status: false,
       status_code: status
     });
+  }
+};
+
+
+
+exports.getProductSalesByDate = async (req, res) => {
+  try {
+    const userData = req?.body?.id;
+    const { startDate, endDate, productName } = req.body;
+    const requestedVendor = req.user.full_name;
+
+    const creds = await CresModel.findByPk(userData);
+    if (!creds?.shop1_domain || !creds?.shop1_access_token) {
+      return res.status(400).json({ status: false, message: "Shop credentials not found" });
+    }
+
+    const shopDomain = creds.shop1_domain;
+    const token = creds.shop1_access_token;
+
+    // Build URL based on whether dates are provided or not
+    let url = `https://${shopDomain}/admin/api/2024-01/orders.json?status=any&limit=250`;
+
+    if (startDate && endDate) {
+      url += `&created_at_min=${startDate}T00:00:00Z&created_at_max=${endDate}T23:59:59Z`;
+    }
+
+    const response = await axios.get(url, {
+      headers: {
+        'X-Shopify-Access-Token': token,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    // Filter orders by vendor and product name
+    const normalizedVendor = normalizeVendor(requestedVendor);
+    const normalizedProductName = productName?.toLowerCase() || "";
+
+    const filteredItems = [];
+
+    response.data.orders.forEach(order => {
+      order.line_items.forEach(item => {
+        if (normalizeVendor(item.vendor) === normalizedVendor &&
+            (!normalizedProductName || item.name.toLowerCase().includes(normalizedProductName))) {
+          filteredItems.push({
+            date: order.created_at.slice(0, 10),
+            productName: item.name,
+            quantity: item.quantity,
+            revenue: parseFloat(item.price) * item.quantity
+          });
+        }
+      });
+    });
+
+    // Group by date
+    const salesByDate = {};
+    filteredItems.forEach(item => {
+      if (!salesByDate[item.date]) {
+        salesByDate[item.date] = { quantity: 0, revenue: 0 };
+      }
+      salesByDate[item.date].quantity += item.quantity;
+      salesByDate[item.date].revenue += item.revenue;
+    });
+
+    return res.json({
+      status: true,
+      vendor: requestedVendor,
+      product: productName,
+      startDate: startDate || "all",
+      endDate: endDate || "all",
+      sales: Object.entries(salesByDate).map(([date, data]) => ({
+        date,
+        quantity: data.quantity,
+        revenue: data.revenue.toFixed(2)
+      }))
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ status: false, message: "Internal Server Error" });
   }
 };
